@@ -8,10 +8,10 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.inventory.CraftItemEvent;
-import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.PlayerInventory;
 
-public class CraftListener  implements Listener {
+public class CraftListener implements Listener {
 
     JobManager jobManager;
 
@@ -29,29 +29,15 @@ public class CraftListener  implements Listener {
         if (jobManager.getActionJobMap().containsKey(BuiltInActions.Material.CRAFT)) {
 
             ItemStack result = e.getRecipe().getResult();
-            int amount;
-
-            switch (e.getAction()) {
-                case PICKUP_ALL, PICKUP_HALF, DROP_ONE_SLOT, DROP_ALL_SLOT -> amount = result.getAmount();
-                case MOVE_TO_OTHER_INVENTORY -> {
-                    if (getRemainingSpace(player.getInventory(), result.asOne()) > 0) {
-                        int lowest = 127;
-                        ItemStack[] matrix = e.getInventory().getMatrix();
-                        for (ItemStack item : matrix) {
-                            if (item != null && !item.isEmpty()) {
-                                int count = item.getAmount();
-                                if (count < lowest) {
-                                    lowest = count;
-                                }
-                            }
-                        }
-                        amount = lowest * result.getAmount();
-                    } else {
-                        amount = 0;
-                    }
-                }
-                default -> amount = 0;
-            }
+            int amount = switch (e.getAction()) {
+                // Take result onto cursor (left/right click)
+                case PICKUP_ALL, PICKUP_HALF -> canCursorAccept(player, result) ? result.getAmount() : 0;
+                // Drop from result slot — crafts even with a full inventory
+                case DROP_ONE_SLOT, DROP_ALL_SLOT -> result.getAmount();
+                // Shift-click into inventory — only as many full crafts as fit
+                case MOVE_TO_OTHER_INVENTORY -> getShiftCraftAmount(e, player, result);
+                default -> 0;
+            };
 
             if (amount <= 0) return;
 
@@ -61,10 +47,34 @@ public class CraftListener  implements Listener {
         }
     }
 
-    public static int getRemainingSpace(Inventory inventory, ItemStack item) {
+    private static int getShiftCraftAmount(CraftItemEvent e, Player player, ItemStack result) {
+        int perCraft = Math.max(1, result.getAmount());
+        int maxCraftsBySpace = getRemainingSpace(player.getInventory(), result.asOne()) / perCraft;
+        if (maxCraftsBySpace <= 0) return 0;
+
+        int lowest = Integer.MAX_VALUE;
+        for (ItemStack item : e.getInventory().getMatrix()) {
+            if (item != null && !item.isEmpty()) {
+                lowest = Math.min(lowest, item.getAmount());
+            }
+        }
+        if (lowest == Integer.MAX_VALUE) return 0;
+
+        return Math.min(lowest, maxCraftsBySpace) * perCraft;
+    }
+
+    /** True when the cursor can hold one full craft result (empty or similar with enough stack room). */
+    private static boolean canCursorAccept(Player player, ItemStack result) {
+        ItemStack cursor = player.getItemOnCursor();
+        if (cursor == null || cursor.isEmpty()) return true;
+        if (!cursor.isSimilar(result)) return false;
+        return cursor.getAmount() + result.getAmount() <= cursor.getMaxStackSize();
+    }
+
+    /** Remaining space in main inventory + hotbar only (not armor/offhand). */
+    public static int getRemainingSpace(PlayerInventory inventory, ItemStack item) {
         int space = 0;
-        for (int i = 0; i < inventory.getSize(); i++) {
-            ItemStack itemStack = inventory.getItem(i);
+        for (ItemStack itemStack : inventory.getStorageContents()) {
             if (itemStack == null || itemStack.isEmpty()) space += item.getMaxStackSize();
             else if (item.isSimilar(itemStack)) space += item.getMaxStackSize() - itemStack.getAmount();
         }
